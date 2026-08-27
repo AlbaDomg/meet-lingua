@@ -73,61 +73,116 @@ export default function Home() {
   const handleAudioSubmit = async (audioBlob: Blob | File, durationSeconds: number = 0, fileName?: string) => {
     setProcessing({
       step: 'uploading',
-      progressMessage: 'Enviando fragmento de audio al servidor...',
+      progressMessage: 'Preparando archivo de audio para procesamiento...',
     });
 
     try {
-      const formData = new FormData();
       const actualFile = audioBlob instanceof File 
         ? audioBlob 
         : new File([audioBlob], fileName || `reunion-${Date.now()}.webm`, { type: audioBlob.type || 'audio/webm' });
 
-      formData.append('audio', actualFile);
-      if (customApiKey) {
-        formData.append('customApiKey', customApiKey);
+      // Chunk file into 3.5MB slices to strictly respect Vercel's 4.5MB Serverless limit
+      const CHUNK_SIZE = 3.5 * 1024 * 1024;
+      const totalChunks = Math.ceil(actualFile.size / CHUNK_SIZE);
+      let fullGermanTranscriptText = '';
+
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(actualFile.size, start + CHUNK_SIZE);
+        const chunkBlob = actualFile.slice(start, end, actualFile.type || 'audio/webm');
+        const chunkFile = new File([chunkBlob], `part_${i + 1}_${actualFile.name}`, { type: actualFile.type || 'audio/webm' });
+
+        setProcessing({
+          step: 'transcribing',
+          progressMessage: totalChunks > 1 
+            ? `Transcribiendo audio en alemán con Whisper (Parte ${i + 1} de ${totalChunks})...`
+            : 'Transcribiendo audio en alemán con OpenAI Whisper (whisper-1)...',
+        });
+
+        const formData = new FormData();
+        formData.append('audio', chunkFile);
+        if (customApiKey) {
+          formData.append('customApiKey', customApiKey);
+        }
+
+        const response = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: customApiKey ? { 'x-openai-key': customApiKey } : {},
+          body: formData,
+        });
+
+        const contentType = response.headers.get('content-type') || '';
+        let data: { error?: string; message?: string; text?: string } = {};
+
+        if (contentType.includes('application/json')) {
+          try {
+            data = await response.json();
+          } catch {
+            const rawText = await response.text();
+            throw new Error(`El servidor devolvió una respuesta no válida: ${rawText.slice(0, 100)}`);
+          }
+        } else {
+          const textError = await response.text();
+          throw new Error(`Error en el servidor (${response.status}): ${textError.slice(0, 150) || response.statusText}`);
+        }
+
+        if (!response.ok) {
+          if (data.error === 'OPENAI_KEY_MISSING') {
+            setIsApiKeyModalOpen(true);
+            throw new Error('Falta la clave API de OpenAI. Por favor ingresa tu OpenAI API Key en los ajustes.');
+          }
+          throw new Error(data.message || data.error || 'Error al transcribir el fragmento de audio.');
+        }
+
+        if (data.text) {
+          fullGermanTranscriptText += (fullGermanTranscriptText ? ' ' : '') + data.text;
+        }
       }
 
-      setProcessing({
-        step: 'transcribing',
-        progressMessage: 'Transcribiendo audio en alemán con OpenAI Whisper (whisper-1)...',
-      });
-
-      const response = await fetch('/api/process', {
-        method: 'POST',
-        headers: customApiKey ? { 'x-openai-key': customApiKey } : {},
-        body: formData,
-      });
-
-      const contentType = response.headers.get('content-type') || '';
-      let data: { error?: string; message?: string; transcripcionAleman?: string; informeEspanol?: ProcessedMeeting['informeEspanol'] } = {};
-
-      if (contentType.includes('application/json')) {
-        try {
-          data = await response.json();
-        } catch {
-          const rawText = await response.text();
-          throw new Error(`El servidor devolvió una respuesta no válida: ${rawText.slice(0, 100)}`);
-        }
-      } else {
-        const textError = await response.text();
-        if (response.status === 413 || textError.includes('Request Entity Too Large')) {
-          throw new Error('El archivo de audio es demasiado grande para procesarse en una sola solicitud. Intenta usar un audio más corto o comprimido (límite de 25MB).');
-        }
-        throw new Error(`Error en el servidor (${response.status}): ${textError.slice(0, 150) || response.statusText}`);
+      if (!fullGermanTranscriptText || fullGermanTranscriptText.trim().length === 0) {
+        throw new Error('Whisper no pudo extraer audio audible o la grabación estaba en silencio.');
       }
 
-      if (!response.ok) {
-        if (data.error === 'OPENAI_KEY_MISSING') {
-          setIsApiKeyModalOpen(true);
-          throw new Error('Falta la clave API de OpenAI. Por favor ingresa tu OpenAI API Key en los ajustes.');
-        }
-        throw new Error(data.message || data.error || 'Error al procesar el audio.');
-      }
-
+      // Step 2: Summarize and translate full transcript with GPT-4o
       setProcessing({
         step: 'analyzing',
         progressMessage: 'Analizando transcripción y traduciendo a informe en español con GPT-4o...',
       });
+
+      const summarizeResponse = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(customApiKey ? { 'x-openai-key': customApiKey } : {}),
+        },
+        body: JSON.stringify({
+          germanTranscriptText: fullGermanTranscriptText,
+          customApiKey,
+        }),
+      });
+
+      const sumContentType = summarizeResponse.headers.get('content-type') || '';
+      let sumData: { error?: string; message?: string; informeEspanol?: ProcessedMeeting['informeEspanol'] } = {};
+
+      if (sumContentType.includes('application/json')) {
+        try {
+          sumData = await summarizeResponse.json();
+        } catch {
+          const rawText = await summarizeResponse.text();
+          throw new Error(`El servidor devolvió una respuesta no válida al generar informe: ${rawText.slice(0, 100)}`);
+        }
+      } else {
+        const textError = await summarizeResponse.text();
+        throw new Error(`Error en el servidor (${summarizeResponse.status}): ${textError.slice(0, 150) || summarizeResponse.statusText}`);
+      }
+
+      if (!summarizeResponse.ok) {
+        if (sumData.error === 'OPENAI_KEY_MISSING') {
+          setIsApiKeyModalOpen(true);
+          throw new Error('Falta la clave API de OpenAI. Por favor ingresa tu OpenAI API Key en los ajustes.');
+        }
+        throw new Error(sumData.message || sumData.error || 'Error al analizar el informe con GPT-4o.');
+      }
 
       const processedMeeting: ProcessedMeeting = {
         id: `meeting-${Date.now()}`,
@@ -140,8 +195,8 @@ export default function Home() {
         }),
         nombreArchivo: actualFile.name,
         modoCaptura: activeTab === 'record' ? 'grabacion' : 'subida',
-        transcripcionAleman: data.transcripcionAleman || '',
-        informeEspanol: data.informeEspanol!,
+        transcripcionAleman: fullGermanTranscriptText,
+        informeEspanol: sumData.informeEspanol!,
         duracionSegundos: durationSeconds,
       };
 
