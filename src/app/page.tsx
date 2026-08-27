@@ -92,6 +92,12 @@ export default function Home() {
         progressMessage: 'Transcribiendo audio en alemán con OpenAI Whisper (whisper-1)...',
       });
 
+      const response = await fetch('/api/process', {
+        method: 'POST',
+        headers: customApiKey ? { 'x-openai-key': customApiKey } : {},
+        body: formData,
+      });
+
       const contentType = response.headers.get('content-type') || '';
       let data: { error?: string; message?: string; transcripcionAleman?: string; informeEspanol?: ProcessedMeeting['informeEspanol'] } = {};
 
@@ -134,8 +140,8 @@ export default function Home() {
         }),
         nombreArchivo: actualFile.name,
         modoCaptura: activeTab === 'record' ? 'grabacion' : 'subida',
-        transcripcionAleman: data.transcripcionAleman,
-        informeEspanol: data.informeEspanol,
+        transcripcionAleman: data.transcripcionAleman || '',
+        informeEspanol: data.informeEspanol!,
         duracionSegundos: durationSeconds,
       };
 
