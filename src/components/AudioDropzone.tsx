@@ -78,7 +78,7 @@ export const AudioDropzone: React.FC<AudioDropzoneProps> = ({
         <span>Cargar Grabación Preexistente</span>
       </h3>
       <p className="text-xs text-gray-400 mb-4">
-        Sube archivos .mp3, .m4a, .wav o .webm de reuniones previas en alemán (máx. 25MB).
+        Sube archivos .mp3, .m4a, .wav o .webm de reuniones previas en alemán (máx. 100MB).
       </p>
 
       {errorMessage && (
@@ -116,7 +116,7 @@ export const AudioDropzone: React.FC<AudioDropzoneProps> = ({
               Arrastra y suelta tu archivo de audio aquí, o <span className="text-brand-400 underline">examina tus carpetas</span>
             </p>
             <p className="text-[11px] text-gray-500 mt-1">
-              Soporta MP3, M4A, WAV, WEBM (Hasta 25 MB por reunión)
+              Soporta MP3, M4A, WAV, WEBM (Hasta 100 MB por reunión)
             </p>
           </div>
         </div>

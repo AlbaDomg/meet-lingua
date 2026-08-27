@@ -96,11 +96,11 @@ export function validateAudioFile(file: File): { valid: boolean; error?: string 
     };
   }
 
-  const maxSizeMB = 25;
+  const maxSizeMB = 100;
   if (file.size > maxSizeMB * 1024 * 1024) {
     return {
       valid: false,
-      error: `El archivo supera el límite de ${maxSizeMB}MB de Whisper (${(file.size / (1024 * 1024)).toFixed(1)}MB). Por favor comprime o divide el archivo.`,
+      error: `El archivo supera el límite de ${maxSizeMB}MB (${(file.size / (1024 * 1024)).toFixed(1)}MB). Por favor usa un archivo de menos de 100MB.`,
     };
   }
 
