@@ -92,13 +92,23 @@ export default function Home() {
         progressMessage: 'Transcribiendo audio en alemán con OpenAI Whisper (whisper-1)...',
       });
 
-      const response = await fetch('/api/process', {
-        method: 'POST',
-        headers: customApiKey ? { 'x-openai-key': customApiKey } : {},
-        body: formData,
-      });
+      const contentType = response.headers.get('content-type') || '';
+      let data: { error?: string; message?: string; transcripcionAleman?: string; informeEspanol?: ProcessedMeeting['informeEspanol'] } = {};
 
-      const data = await response.json();
+      if (contentType.includes('application/json')) {
+        try {
+          data = await response.json();
+        } catch {
+          const rawText = await response.text();
+          throw new Error(`El servidor devolvió una respuesta no válida: ${rawText.slice(0, 100)}`);
+        }
+      } else {
+        const textError = await response.text();
+        if (response.status === 413 || textError.includes('Request Entity Too Large')) {
+          throw new Error('El archivo de audio es demasiado grande para procesarse en una sola solicitud. Intenta usar un audio más corto o comprimido (límite de 25MB).');
+        }
+        throw new Error(`Error en el servidor (${response.status}): ${textError.slice(0, 150) || response.statusText}`);
+      }
 
       if (!response.ok) {
         if (data.error === 'OPENAI_KEY_MISSING') {

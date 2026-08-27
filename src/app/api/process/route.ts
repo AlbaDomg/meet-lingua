@@ -3,7 +3,7 @@ import { createOpenAIClient } from '@/lib/openai';
 import { WHISPER_TECHNICAL_PROMPT, GPT4O_SYSTEM_PROMPT } from '@/lib/prompts';
 import { MeetingReportData } from '@/lib/types';
 
-export const maxDuration = 120; // 2 minutes timeout limit for long audio files
+export const maxDuration = 300; // 5 minutes timeout limit for long audio files
 
 export async function POST(req: NextRequest) {
   try {
@@ -36,15 +36,41 @@ export async function POST(req: NextRequest) {
     console.log(`[Meetlingua AI] Procesando audio: ${audioFile.name} (${(audioFile.size / 1024 / 1024).toFixed(2)} MB)`);
 
     // Step 1: Transcribe German audio with OpenAI Whisper (whisper-1)
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: 'whisper-1',
-      language: 'de',
-      prompt: WHISPER_TECHNICAL_PROMPT,
-      temperature: 0.0,
-    });
+    // Handle chunking for audio files > 24MB (Whisper 25MB limit safeguard)
+    let germanTranscriptText = '';
+    const MAX_CHUNK_SIZE = 20 * 1024 * 1024; // 20 MB safe chunk limit
 
-    const germanTranscriptText = transcription.text;
+    if (audioFile.size > 24 * 1024 * 1024) {
+      const chunksCount = Math.ceil(audioFile.size / MAX_CHUNK_SIZE);
+      console.log(`[Meetlingua AI] Archivo grande de audio (${(audioFile.size / 1024 / 1024).toFixed(2)} MB). Dividiendo en ${chunksCount} partes...`);
+      for (let i = 0; i < chunksCount; i++) {
+        const start = i * MAX_CHUNK_SIZE;
+        const end = Math.min(audioFile.size, start + MAX_CHUNK_SIZE);
+        const chunkBlob = audioFile.slice(start, end, audioFile.type || 'audio/webm');
+        const chunkFile = new File([chunkBlob], `part_${i + 1}_${audioFile.name}`, { type: audioFile.type || 'audio/webm' });
+
+        const partTranscription = await openai.audio.transcriptions.create({
+          file: chunkFile,
+          model: 'whisper-1',
+          language: 'de',
+          prompt: WHISPER_TECHNICAL_PROMPT,
+          temperature: 0.0,
+        });
+
+        if (partTranscription.text) {
+          germanTranscriptText += (germanTranscriptText ? ' ' : '') + partTranscription.text;
+        }
+      }
+    } else {
+      const transcription = await openai.audio.transcriptions.create({
+        file: audioFile,
+        model: 'whisper-1',
+        language: 'de',
+        prompt: WHISPER_TECHNICAL_PROMPT,
+        temperature: 0.0,
+      });
+      germanTranscriptText = transcription.text;
+    }
 
     if (!germanTranscriptText || germanTranscriptText.trim().length === 0) {
       return NextResponse.json(

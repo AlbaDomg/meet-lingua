@@ -112,13 +112,13 @@ export const DualAudioRecorder: React.FC<DualAudioRecorderProps> = ({
 
       // Select mimeType supported by browser
       let mimeType = 'audio/webm;codecs=opus';
-      let options: MediaRecorderOptions = {};
+      let options: MediaRecorderOptions = { audioBitsPerSecond: 32000 };
       if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mimeType)) {
-        options = { mimeType };
+        options = { mimeType, audioBitsPerSecond: 32000 };
       } else if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm')) {
-        options = { mimeType: 'audio/webm' };
+        options = { mimeType: 'audio/webm', audioBitsPerSecond: 32000 };
       } else if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/mp4')) {
-        options = { mimeType: 'audio/mp4' };
+        options = { mimeType: 'audio/mp4', audioBitsPerSecond: 32000 };
       }
 
       const mediaRecorder = new MediaRecorder(combinedStream, options);
