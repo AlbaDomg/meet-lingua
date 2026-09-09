@@ -114,7 +114,9 @@ export const ReportView: React.FC<ReportViewProps> = ({ meeting, onReset }) => {
             }`}
           >
             <Languages className="w-4 h-4" />
-            <span>Transcripción Original (Alemán)</span>
+            <span>
+              Transcripción Original {meeting.idiomaAudio === 'es' ? '(Español 🇪🇸)' : meeting.idiomaAudio === 'de' ? '(Alemán 🇩🇪)' : ''}
+            </span>
           </button>
         </div>
       </div>
@@ -264,10 +266,12 @@ export const ReportView: React.FC<ReportViewProps> = ({ meeting, onReset }) => {
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <Languages className="w-5 h-5 text-brand-400" />
-                <span>Transcripción Whisper (Alemán)</span>
+                <span>
+                  Transcripción Whisper {meeting.idiomaAudio === 'es' ? '(Español 🇪🇸)' : meeting.idiomaAudio === 'de' ? '(Alemán 🇩🇪)' : 'Original'}
+                </span>
               </h3>
               <p className="text-xs text-gray-400">
-                {transcripcionAleman.split(/\s+/).length} palabras transcribidas con modelo whisper-1.
+                {(meeting.transcripcionOriginal || transcripcionAleman).split(/\s+/).length} palabras transcribidas con modelo whisper-1.
               </p>
             </div>
 
@@ -277,7 +281,7 @@ export const ReportView: React.FC<ReportViewProps> = ({ meeting, onReset }) => {
                 <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Buscar texto en alemán..."
+                  placeholder="Buscar texto en la transcripción..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-9 pr-3 py-1.5 rounded-xl bg-gray-900 border border-white/10 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand-500 w-48 sm:w-64"

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createOpenAIClient } from '@/lib/openai';
-import { WHISPER_TECHNICAL_PROMPT, GPT4O_SYSTEM_PROMPT } from '@/lib/prompts';
+import { GPT4O_SYSTEM_PROMPT, getWhisperPrompt, getGPT4oUserPrompt } from '@/lib/prompts';
 import { MeetingReportData } from '@/lib/types';
 
 export const maxDuration = 300; // 5 minutes timeout limit for long audio files
@@ -10,6 +10,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const audioFile = formData.get('audio') as File | null;
     const customApiKey = req.headers.get('x-openai-key') || (formData.get('customApiKey') as string | null) || undefined;
+    const audioLanguage = (formData.get('audioLanguage') as string | null) || 'de';
 
     if (!audioFile) {
       return NextResponse.json(
@@ -33,12 +34,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log(`[Meetlingua AI] Procesando audio: ${audioFile.name} (${(audioFile.size / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`[Meetlingua AI] Procesando audio (${audioLanguage}): ${audioFile.name} (${(audioFile.size / 1024 / 1024).toFixed(2)} MB)`);
 
-    // Step 1: Transcribe German audio with OpenAI Whisper (whisper-1)
-    // Handle chunking for audio files > 24MB (Whisper 25MB limit safeguard)
-    let germanTranscriptText = '';
+    // Step 1: Transcribe audio with OpenAI Whisper (whisper-1)
+    let transcriptText = '';
     const MAX_CHUNK_SIZE = 20 * 1024 * 1024; // 20 MB safe chunk limit
+
+    const whisperPrompt = getWhisperPrompt(audioLanguage);
 
     if (audioFile.size > 24 * 1024 * 1024) {
       const chunksCount = Math.ceil(audioFile.size / MAX_CHUNK_SIZE);
@@ -49,39 +51,57 @@ export async function POST(req: NextRequest) {
         const chunkBlob = audioFile.slice(start, end, audioFile.type || 'audio/webm');
         const chunkFile = new File([chunkBlob], `part_${i + 1}_${audioFile.name}`, { type: audioFile.type || 'audio/webm' });
 
-        const partTranscription = await openai.audio.transcriptions.create({
+        const whisperOptions: {
+          file: File;
+          model: string;
+          prompt: string;
+          temperature: number;
+          language?: string;
+        } = {
           file: chunkFile,
           model: 'whisper-1',
-          language: 'de',
-          prompt: WHISPER_TECHNICAL_PROMPT,
+          prompt: whisperPrompt,
           temperature: 0.0,
-        });
+        };
+        if (audioLanguage !== 'auto') whisperOptions.language = audioLanguage;
+
+        const partTranscription = await openai.audio.transcriptions.create(whisperOptions);
 
         if (partTranscription.text) {
-          germanTranscriptText += (germanTranscriptText ? ' ' : '') + partTranscription.text;
+          transcriptText += (transcriptText ? ' ' : '') + partTranscription.text;
         }
       }
     } else {
-      const transcription = await openai.audio.transcriptions.create({
+      const whisperOptions: {
+        file: File;
+        model: string;
+        prompt: string;
+        temperature: number;
+        language?: string;
+      } = {
         file: audioFile,
         model: 'whisper-1',
-        language: 'de',
-        prompt: WHISPER_TECHNICAL_PROMPT,
+        prompt: whisperPrompt,
         temperature: 0.0,
-      });
-      germanTranscriptText = transcription.text;
+      };
+      if (audioLanguage !== 'auto') whisperOptions.language = audioLanguage;
+
+      const transcription = await openai.audio.transcriptions.create(whisperOptions);
+      transcriptText = transcription.text;
     }
 
-    if (!germanTranscriptText || germanTranscriptText.trim().length === 0) {
+    if (!transcriptText || transcriptText.trim().length === 0) {
       return NextResponse.json(
         { error: 'Whisper no pudo extraer audio audible o la grabación estaba en silencio.' },
         { status: 422 }
       );
     }
 
-    console.log(`[Meetlingua AI] Transcripción completada (${germanTranscriptText.length} caracteres). Generando informe en español con GPT-4o...`);
+    console.log(`[Meetlingua AI] Transcripción completada (${transcriptText.length} caracteres). Generando informe en español con GPT-4o...`);
 
-    // Step 2: Analyze German transcript with gpt-4o and translate into structured Spanish JSON
+    // Step 2: Analyze transcript with gpt-4o and generate structured Spanish JSON
+    const userPrompt = getGPT4oUserPrompt(audioLanguage, transcriptText);
+
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       temperature: 0.2,
@@ -90,7 +110,7 @@ export async function POST(req: NextRequest) {
         { role: 'system', content: GPT4O_SYSTEM_PROMPT },
         { 
           role: 'user', 
-          content: `Analiza y traduce al español el siguiente resumen/transcripción de la reunión en alemán:\n\n${germanTranscriptText}` 
+          content: userPrompt 
         },
       ],
     });
@@ -109,7 +129,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      transcripcionAleman: germanTranscriptText,
+      transcripcionAleman: transcriptText,
+      transcripcionOriginal: transcriptText,
+      idiomaAudio: audioLanguage,
       informeEspanol: parsedReport,
     });
 

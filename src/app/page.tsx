@@ -8,12 +8,14 @@ import { ProcessingOverlay } from '@/components/ProcessingOverlay';
 import { ReportView } from '@/components/ReportView';
 import { HistoryDrawer } from '@/components/HistoryDrawer';
 import { ApiKeyModal } from '@/components/ApiKeyModal';
-import { ProcessedMeeting, ProcessingState } from '@/lib/types';
+import { LanguageSelector } from '@/components/LanguageSelector';
+import { ProcessedMeeting, ProcessingState, AudioLanguage } from '@/lib/types';
 import { Mic, UploadCloud, Sparkles, AlertCircle, RefreshCw, Key } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'record' | 'upload'>('record');
   const [customApiKey, setCustomApiKey] = useState<string>('');
+  const [audioLanguage, setAudioLanguage] = useState<AudioLanguage>('de');
   const [history, setHistory] = useState<ProcessedMeeting[]>([]);
   const [activeMeeting, setActiveMeeting] = useState<ProcessedMeeting | null>(null);
 
@@ -29,6 +31,9 @@ export default function Home() {
   useEffect(() => {
     const savedKey = localStorage.getItem('meetlingua_custom_api_key');
     if (savedKey) setCustomApiKey(savedKey);
+
+    const savedLang = localStorage.getItem('meetlingua_audio_language') as AudioLanguage | null;
+    if (savedLang) setAudioLanguage(savedLang);
 
     const savedHistory = localStorage.getItem('meetlingua_meetings_history');
     if (savedHistory) {
@@ -47,6 +52,11 @@ export default function Home() {
     } else {
       localStorage.removeItem('meetlingua_custom_api_key');
     }
+  };
+
+  const saveAudioLanguage = (lang: AudioLanguage) => {
+    setAudioLanguage(lang);
+    localStorage.setItem('meetlingua_audio_language', lang);
   };
 
   const saveMeetingToHistory = (newMeeting: ProcessedMeeting) => {
@@ -101,9 +111,19 @@ export default function Home() {
 
         const formData = new FormData();
         formData.append('audio', chunkFile);
+        formData.append('audioLanguage', audioLanguage);
         if (customApiKey) {
           formData.append('customApiKey', customApiKey);
         }
+
+        const langText = audioLanguage === 'de' ? 'en alemán' : audioLanguage === 'es' ? 'en español' : 'y detectando idioma';
+
+        setProcessing({
+          step: 'transcribing',
+          progressMessage: totalChunks > 1 
+            ? `Transcribiendo audio ${langText} con Whisper (Parte ${i + 1} de ${totalChunks})...`
+            : `Transcribiendo audio ${langText} con OpenAI Whisper (whisper-1)...`,
+        });
 
         const response = await fetch('/api/transcribe', {
           method: 'POST',
@@ -143,10 +163,14 @@ export default function Home() {
         throw new Error('Whisper no pudo extraer audio audible o la grabación estaba en silencio.');
       }
 
-      // Step 2: Summarize and translate full transcript with GPT-4o
+      // Step 2: Summarize transcript with GPT-4o
+      const analyzeMessage = audioLanguage === 'es'
+        ? 'Analizando y estructurando informe de clase/reunión en español con GPT-4o...'
+        : 'Analizando transcripción y traduciendo a informe en español con GPT-4o...';
+
       setProcessing({
         step: 'analyzing',
-        progressMessage: 'Analizando transcripción y traduciendo a informe en español con GPT-4o...',
+        progressMessage: analyzeMessage,
       });
 
       const summarizeResponse = await fetch('/api/summarize', {
@@ -157,6 +181,8 @@ export default function Home() {
         },
         body: JSON.stringify({
           germanTranscriptText: fullGermanTranscriptText,
+          transcriptText: fullGermanTranscriptText,
+          audioLanguage,
           customApiKey,
         }),
       });
@@ -196,6 +222,8 @@ export default function Home() {
         nombreArchivo: actualFile.name,
         modoCaptura: activeTab === 'record' ? 'grabacion' : 'subida',
         transcripcionAleman: fullGermanTranscriptText,
+        transcripcionOriginal: fullGermanTranscriptText,
+        idiomaAudio: audioLanguage,
         informeEspanol: sumData.informeEspanol!,
         duracionSegundos: durationSeconds,
       };
@@ -286,13 +314,20 @@ export default function Home() {
               </div>
 
               <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-                Captura tus Reuniones en <span className="text-gradient">Alemán</span> y obtén Informes en <span className="text-gradient-amber">Español</span>
+                Captura tus <span className="text-gradient">Reuniones y Clases</span> y obtén Informes en <span className="text-gradient-amber">Español</span>
               </h2>
 
               <p className="text-sm text-gray-400 max-w-2xl mx-auto leading-relaxed">
-                Combina el audio del micrófono y las llamadas del sistema (Zoom/Meet/Teams). Whisper transcribe el vocabulario técnico en alemán y GPT-4o extrae propuestas, decisiones y tareas pendientes traducidas al español.
+                Graba o sube audios en alemán, español o cualquier idioma. Whisper transcribe el contenido técnico y GPT-4o extrae propuestas, decisiones y tareas estructuradas en español.
               </p>
             </div>
+
+            {/* Language Selector */}
+            <LanguageSelector
+              selectedLanguage={audioLanguage}
+              onSelectLanguage={saveAudioLanguage}
+              disabled={processing.step !== 'idle' && processing.step !== 'completed' && processing.step !== 'error'}
+            />
 
             {/* Mode Switcher Tabs */}
             <div className="flex items-center justify-center p-1 bg-gray-950/80 rounded-2xl border border-white/10 max-w-md mx-auto">

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createOpenAIClient } from '@/lib/openai';
-import { WHISPER_TECHNICAL_PROMPT } from '@/lib/prompts';
+import { getWhisperPrompt } from '@/lib/prompts';
 
 export const maxDuration = 60;
 
@@ -9,6 +9,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const audioFile = formData.get('audio') as File | null;
     const customApiKey = req.headers.get('x-openai-key') || (formData.get('customApiKey') as string | null) || undefined;
+    const audioLanguage = (formData.get('audioLanguage') as string | null) || 'de';
 
     if (!audioFile) {
       return NextResponse.json(
@@ -31,13 +32,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const transcription = await openai.audio.transcriptions.create({
+    const whisperOptions: {
+      file: File;
+      model: string;
+      prompt: string;
+      temperature: number;
+      language?: string;
+    } = {
       file: audioFile,
       model: 'whisper-1',
-      language: 'de',
-      prompt: WHISPER_TECHNICAL_PROMPT,
+      prompt: getWhisperPrompt(audioLanguage),
       temperature: 0.0,
-    });
+    };
+
+    if (audioLanguage !== 'auto') {
+      whisperOptions.language = audioLanguage;
+    }
+
+    const transcription = await openai.audio.transcriptions.create(whisperOptions);
 
     return NextResponse.json({
       success: true,

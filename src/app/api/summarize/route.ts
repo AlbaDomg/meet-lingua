@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createOpenAIClient } from '@/lib/openai';
-import { GPT4O_SYSTEM_PROMPT } from '@/lib/prompts';
+import { GPT4O_SYSTEM_PROMPT, getGPT4oUserPrompt } from '@/lib/prompts';
 import { MeetingReportData } from '@/lib/types';
 
 export const maxDuration = 60;
@@ -8,10 +8,11 @@ export const maxDuration = 60;
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { germanTranscriptText, customApiKey } = body;
+    const { germanTranscriptText, transcriptText, audioLanguage = 'de', customApiKey } = body;
+    const textToAnalyze = transcriptText || germanTranscriptText;
     const headerKey = req.headers.get('x-openai-key') || customApiKey || undefined;
 
-    if (!germanTranscriptText || typeof germanTranscriptText !== 'string' || germanTranscriptText.trim().length === 0) {
+    if (!textToAnalyze || typeof textToAnalyze !== 'string' || textToAnalyze.trim().length === 0) {
       return NextResponse.json(
         { error: 'No se recibió ninguna transcripción para analizar.' },
         { status: 400 }
@@ -32,6 +33,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const userPrompt = getGPT4oUserPrompt(audioLanguage, textToAnalyze);
+
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       temperature: 0.2,
@@ -40,7 +43,7 @@ export async function POST(req: NextRequest) {
         { role: 'system', content: GPT4O_SYSTEM_PROMPT },
         { 
           role: 'user', 
-          content: `Analiza y traduce al español el siguiente resumen/transcripción de la reunión en alemán:\n\n${germanTranscriptText}` 
+          content: userPrompt 
         },
       ],
     });

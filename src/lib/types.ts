@@ -32,12 +32,16 @@ export interface MeetingReportData {
   markdownCompleto: string;
 }
 
+export type AudioLanguage = 'de' | 'es' | 'auto';
+
 export interface ProcessedMeeting {
   id: string;
   fechaCreacion: string;
   nombreArchivo?: string;
   modoCaptura: 'grabacion' | 'subida';
   transcripcionAleman: string;
+  transcripcionOriginal?: string;
+  idiomaAudio?: AudioLanguage;
   informeEspanol: MeetingReportData;
   duracionSegundos: number;
 }
