@@ -15,7 +15,8 @@ import {
   Sparkles,
   ArrowLeft,
   Calendar,
-  Clock
+  Clock,
+  Layers
 } from 'lucide-react';
 import { ProcessedMeeting } from '@/lib/types';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -75,11 +76,32 @@ export const ReportView: React.FC<ReportViewProps> = ({ meeting, onReset }) => {
                   {formatTime(duracionSegundos)}
                 </span>
               )}
+              {meeting.archivos && meeting.archivos.length > 1 && (
+                <span className="px-2.5 py-0.5 rounded-full bg-accent-violet/20 text-purple-300 text-[11px] font-semibold border border-purple-500/30 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5 text-purple-400" />
+                  {meeting.archivos.length} audios consolidados
+                </span>
+              )}
             </div>
 
             <h2 className="text-2xl font-bold text-white tracking-tight">
               {informeEspanol.tituloReunion || 'Informe de Reunión Multilingüe'}
             </h2>
+
+            {meeting.archivos && meeting.archivos.length > 1 && (
+              <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[11px] text-gray-400 font-medium">Audios procesados en orden:</span>
+                {meeting.archivos.map((fileName, idx) => (
+                  <span
+                    key={idx}
+                    className="px-2 py-0.5 rounded-lg bg-gray-900/90 border border-white/5 text-[11px] text-gray-300 flex items-center gap-1.5"
+                  >
+                    <span className="text-brand-400 font-bold text-[10px]">#{idx + 1}</span>
+                    <span className="truncate max-w-[160px]" title={fileName}>{fileName}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <button

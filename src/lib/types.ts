@@ -38,6 +38,7 @@ export interface ProcessedMeeting {
   id: string;
   fechaCreacion: string;
   nombreArchivo?: string;
+  archivos?: string[];
   modoCaptura: 'grabacion' | 'subida';
   transcripcionAleman: string;
   transcripcionOriginal?: string;

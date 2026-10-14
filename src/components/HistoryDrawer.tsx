@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Search, Trash2, Calendar, Clock, FileText, ChevronRight, AlertTriangle } from 'lucide-react';
+import { X, Search, Trash2, Calendar, Clock, FileText, ChevronRight, AlertTriangle, Layers } from 'lucide-react';
 import { ProcessedMeeting } from '@/lib/types';
 import { formatTime } from '@/lib/audioUtils';
 
@@ -91,6 +91,12 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                       <span className="flex items-center gap-1">
                         <Clock className="w-3 h-3 text-gray-500" />
                         {formatTime(meeting.duracionSegundos)}
+                      </span>
+                    )}
+                    {meeting.archivos && meeting.archivos.length > 1 && (
+                      <span className="flex items-center gap-1 text-purple-400 font-medium">
+                        <Layers className="w-3 h-3" />
+                        {meeting.archivos.length} audios
                       </span>
                     )}
                   </div>

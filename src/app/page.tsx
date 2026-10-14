@@ -80,91 +80,128 @@ export default function Home() {
     setActiveMeeting(null);
   };
 
-  const handleAudioSubmit = async (audioBlob: Blob | File, durationSeconds: number = 0, fileName?: string) => {
+  const handleAudioFilesSubmit = async (
+    filesInput: (Blob | File)[],
+    durationSeconds: number = 0,
+    defaultName?: string
+  ) => {
+    if (!filesInput || filesInput.length === 0) return;
+
     setProcessing({
       step: 'uploading',
-      progressMessage: 'Preparando archivo de audio para procesamiento...',
+      progressMessage: filesInput.length > 1
+        ? `Preparando ${filesInput.length} archivos de audio para procesamiento...`
+        : 'Preparando archivo de audio para procesamiento...',
     });
 
     try {
-      const actualFile = audioBlob instanceof File 
-        ? audioBlob 
-        : new File([audioBlob], fileName || `reunion-${Date.now()}.webm`, { type: audioBlob.type || 'audio/webm' });
+      const actualFiles: File[] = filesInput.map((item, idx) => {
+        if (item instanceof File) return item;
+        return new File(
+          [item],
+          defaultName || `reunion-${Date.now()}${filesInput.length > 1 ? `_parte${idx + 1}` : ''}.webm`,
+          { type: item.type || 'audio/webm' }
+        );
+      });
 
       // Chunk file into 3.5MB slices to strictly respect Vercel's 4.5MB Serverless limit
       const CHUNK_SIZE = 3.5 * 1024 * 1024;
-      const totalChunks = Math.ceil(actualFile.size / CHUNK_SIZE);
+      const fileTranscripts: { fileName: string; text: string }[] = [];
+      const langText = audioLanguage === 'de' ? 'en alemán' : audioLanguage === 'es' ? 'en español' : 'y detectando idioma';
+
+      // Process each file sequentially in the exact user-specified order
+      for (let fileIdx = 0; fileIdx < actualFiles.length; fileIdx++) {
+        const currentFile = actualFiles[fileIdx];
+        const totalChunks = Math.ceil(currentFile.size / CHUNK_SIZE);
+        let currentFileTranscript = '';
+
+        for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+          const start = chunkIdx * CHUNK_SIZE;
+          const end = Math.min(currentFile.size, start + CHUNK_SIZE);
+          const chunkBlob = currentFile.slice(start, end, currentFile.type || 'audio/webm');
+          const chunkFile = new File([chunkBlob], `part_${chunkIdx + 1}_${currentFile.name}`, {
+            type: currentFile.type || 'audio/webm',
+          });
+
+          const audioPrefix = actualFiles.length > 1
+            ? `Audio ${fileIdx + 1} de ${actualFiles.length} (${currentFile.name}): `
+            : '';
+          const chunkSuffix = totalChunks > 1
+            ? ` (Parte ${chunkIdx + 1}/${totalChunks})`
+            : '';
+
+          setProcessing({
+            step: 'transcribing',
+            progressMessage: `${audioPrefix}Transcribiendo audio ${langText} con Whisper${chunkSuffix}...`,
+          });
+
+          const formData = new FormData();
+          formData.append('audio', chunkFile);
+          formData.append('audioLanguage', audioLanguage);
+          if (customApiKey) {
+            formData.append('customApiKey', customApiKey);
+          }
+
+          const response = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: customApiKey ? { 'x-openai-key': customApiKey } : {},
+            body: formData,
+          });
+
+          const contentType = response.headers.get('content-type') || '';
+          let data: { error?: string; message?: string; text?: string } = {};
+
+          if (contentType.includes('application/json')) {
+            try {
+              data = await response.json();
+            } catch {
+              const rawText = await response.text();
+              throw new Error(`El servidor devolvió una respuesta no válida: ${rawText.slice(0, 100)}`);
+            }
+          } else {
+            const textError = await response.text();
+            throw new Error(`Error en el servidor (${response.status}): ${textError.slice(0, 150) || response.statusText}`);
+          }
+
+          if (!response.ok) {
+            if (data.error === 'OPENAI_KEY_MISSING') {
+              setIsApiKeyModalOpen(true);
+              throw new Error('Falta la clave API de OpenAI. Por favor ingresa tu OpenAI API Key en los ajustes.');
+            }
+            throw new Error(data.message || data.error || `Error al transcribir ${currentFile.name}.`);
+          }
+
+          if (data.text) {
+            currentFileTranscript += (currentFileTranscript ? ' ' : '') + data.text;
+          }
+        }
+
+        if (currentFileTranscript.trim().length > 0) {
+          fileTranscripts.push({
+            fileName: currentFile.name,
+            text: currentFileTranscript.trim(),
+          });
+        }
+      }
+
+      if (fileTranscripts.length === 0) {
+        throw new Error('Whisper no pudo extraer audio audible de los archivos o estaban en silencio.');
+      }
+
+      // Consolidate transcripts
       let fullGermanTranscriptText = '';
-
-      for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(actualFile.size, start + CHUNK_SIZE);
-        const chunkBlob = actualFile.slice(start, end, actualFile.type || 'audio/webm');
-        const chunkFile = new File([chunkBlob], `part_${i + 1}_${actualFile.name}`, { type: actualFile.type || 'audio/webm' });
-
-        setProcessing({
-          step: 'transcribing',
-          progressMessage: totalChunks > 1 
-            ? `Transcribiendo audio en alemán con Whisper (Parte ${i + 1} de ${totalChunks})...`
-            : 'Transcribiendo audio en alemán con OpenAI Whisper (whisper-1)...',
-        });
-
-        const formData = new FormData();
-        formData.append('audio', chunkFile);
-        formData.append('audioLanguage', audioLanguage);
-        if (customApiKey) {
-          formData.append('customApiKey', customApiKey);
-        }
-
-        const langText = audioLanguage === 'de' ? 'en alemán' : audioLanguage === 'es' ? 'en español' : 'y detectando idioma';
-
-        setProcessing({
-          step: 'transcribing',
-          progressMessage: totalChunks > 1 
-            ? `Transcribiendo audio ${langText} con Whisper (Parte ${i + 1} de ${totalChunks})...`
-            : `Transcribiendo audio ${langText} con OpenAI Whisper (whisper-1)...`,
-        });
-
-        const response = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: customApiKey ? { 'x-openai-key': customApiKey } : {},
-          body: formData,
-        });
-
-        const contentType = response.headers.get('content-type') || '';
-        let data: { error?: string; message?: string; text?: string } = {};
-
-        if (contentType.includes('application/json')) {
-          try {
-            data = await response.json();
-          } catch {
-            const rawText = await response.text();
-            throw new Error(`El servidor devolvió una respuesta no válida: ${rawText.slice(0, 100)}`);
-          }
-        } else {
-          const textError = await response.text();
-          throw new Error(`Error en el servidor (${response.status}): ${textError.slice(0, 150) || response.statusText}`);
-        }
-
-        if (!response.ok) {
-          if (data.error === 'OPENAI_KEY_MISSING') {
-            setIsApiKeyModalOpen(true);
-            throw new Error('Falta la clave API de OpenAI. Por favor ingresa tu OpenAI API Key en los ajustes.');
-          }
-          throw new Error(data.message || data.error || 'Error al transcribir el fragmento de audio.');
-        }
-
-        if (data.text) {
-          fullGermanTranscriptText += (fullGermanTranscriptText ? ' ' : '') + data.text;
-        }
+      if (fileTranscripts.length === 1) {
+        fullGermanTranscriptText = fileTranscripts[0].text;
+      } else {
+        fullGermanTranscriptText = fileTranscripts
+          .map((item, idx) => `=== AUDIO ${idx + 1} DE ${fileTranscripts.length} (Archivo: ${item.fileName}) ===\n${item.text}`)
+          .join('\n\n');
       }
 
-      if (!fullGermanTranscriptText || fullGermanTranscriptText.trim().length === 0) {
-        throw new Error('Whisper no pudo extraer audio audible o la grabación estaba en silencio.');
-      }
-
-      // Step 2: Summarize transcript with GPT-4o
-      const analyzeMessage = audioLanguage === 'es'
+      // Step 2: Summarize consolidated transcript with GPT-4o
+      const analyzeMessage = actualFiles.length > 1
+        ? `Consolidando contenido de los ${actualFiles.length} audios y redactando informe unificado con GPT-4o...`
+        : audioLanguage === 'es'
         ? 'Analizando y estructurando informe de clase/reunión en español con GPT-4o...'
         : 'Analizando transcripción y traduciendo a informe en español con GPT-4o...';
 
@@ -210,6 +247,10 @@ export default function Home() {
         throw new Error(sumData.message || sumData.error || 'Error al analizar el informe con GPT-4o.');
       }
 
+      const displayFileName = actualFiles.length === 1
+        ? actualFiles[0].name
+        : `${actualFiles.length} audios: ${actualFiles.map((f) => f.name).join(', ')}`;
+
       const processedMeeting: ProcessedMeeting = {
         id: `meeting-${Date.now()}`,
         fechaCreacion: new Date().toLocaleDateString('es-ES', {
@@ -219,7 +260,8 @@ export default function Home() {
           hour: '2-digit',
           minute: '2-digit',
         }),
-        nombreArchivo: actualFile.name,
+        nombreArchivo: displayFileName,
+        archivos: actualFiles.map((f) => f.name),
         modoCaptura: activeTab === 'record' ? 'grabacion' : 'subida',
         transcripcionAleman: fullGermanTranscriptText,
         transcripcionOriginal: fullGermanTranscriptText,
@@ -352,19 +394,19 @@ export default function Home() {
                 }`}
               >
                 <UploadCloud className="w-4 h-4" />
-                <span>Subir Audio (.mp3/.wav)</span>
+                <span>Subir Audios (.mp3/.wav)</span>
               </button>
             </div>
 
             {/* Mode Content */}
             {activeTab === 'record' ? (
               <DualAudioRecorder
-                onRecordingComplete={(blob, duration) => handleAudioSubmit(blob, duration)}
+                onRecordingComplete={(blob, duration) => handleAudioFilesSubmit([blob], duration)}
                 disabled={processing.step !== 'idle' && processing.step !== 'error'}
               />
             ) : (
               <AudioDropzone
-                onFileSelect={(file) => handleAudioSubmit(file, 0, file.name)}
+                onFilesSelect={(files) => handleAudioFilesSubmit(files, 0)}
                 disabled={processing.step !== 'idle' && processing.step !== 'error'}
               />
             )}
