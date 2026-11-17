@@ -10,6 +10,7 @@ import { HistoryDrawer } from '@/components/HistoryDrawer';
 import { ApiKeyModal } from '@/components/ApiKeyModal';
 import { LanguageSelector } from '@/components/LanguageSelector';
 import { ProcessedMeeting, ProcessingState, AudioLanguage } from '@/lib/types';
+import { splitAudioFileIntoWavChunks } from '@/lib/audioUtils';
 import { Mic, UploadCloud, Sparkles, AlertCircle, RefreshCw, Key } from 'lucide-react';
 
 export default function Home() {
@@ -104,30 +105,44 @@ export default function Home() {
         );
       });
 
-      // Chunk file into 3.5MB slices to strictly respect Vercel's 4.5MB Serverless limit
-      const CHUNK_SIZE = 3.5 * 1024 * 1024;
       const fileTranscripts: { fileName: string; text: string }[] = [];
       const langText = audioLanguage === 'de' ? 'en alemán' : audioLanguage === 'es' ? 'en español' : 'y detectando idioma';
 
       // Process each file sequentially in the exact user-specified order
       for (let fileIdx = 0; fileIdx < actualFiles.length; fileIdx++) {
         const currentFile = actualFiles[fileIdx];
-        const totalChunks = Math.ceil(currentFile.size / CHUNK_SIZE);
+
+        // Split large files into valid 16kHz mono WAV chunks to guarantee audio integrity and bypass Vercel limits
+        let chunkFiles: File[] = [];
+        if (currentFile.size > 3.5 * 1024 * 1024) {
+          setProcessing({
+            step: 'uploading',
+            progressMessage: actualFiles.length > 1
+              ? `Optimizando audio ${fileIdx + 1} de ${actualFiles.length} (${currentFile.name}, ${(currentFile.size / (1024 * 1024)).toFixed(1)} MB)...`
+              : `Optimizando audio (${(currentFile.size / (1024 * 1024)).toFixed(1)} MB) en segmentos de alta calidad...`,
+          });
+
+          chunkFiles = await splitAudioFileIntoWavChunks(
+            currentFile,
+            currentFile.name,
+            90,
+            (msg) => setProcessing({ step: 'uploading', progressMessage: msg })
+          );
+        } else {
+          chunkFiles = [currentFile];
+        }
+
+        const totalChunks = chunkFiles.length;
         let currentFileTranscript = '';
 
         for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-          const start = chunkIdx * CHUNK_SIZE;
-          const end = Math.min(currentFile.size, start + CHUNK_SIZE);
-          const chunkBlob = currentFile.slice(start, end, currentFile.type || 'audio/webm');
-          const chunkFile = new File([chunkBlob], `part_${chunkIdx + 1}_${currentFile.name}`, {
-            type: currentFile.type || 'audio/webm',
-          });
+          const chunkFile = chunkFiles[chunkIdx];
 
           const audioPrefix = actualFiles.length > 1
             ? `Audio ${fileIdx + 1} de ${actualFiles.length} (${currentFile.name}): `
             : '';
           const chunkSuffix = totalChunks > 1
-            ? ` (Parte ${chunkIdx + 1}/${totalChunks})`
+            ? ` (Parte ${chunkIdx + 1} de ${totalChunks})`
             : '';
 
           setProcessing({
@@ -305,7 +320,13 @@ export default function Home() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-8 space-y-8">
         
         {/* Processing Step Overlay Modal */}
-        <ProcessingOverlay step={processing.step} message={processing.progressMessage} />
+        <ProcessingOverlay
+          step={processing.step}
+          message={processing.progressMessage}
+          error={processing.error}
+          onDismiss={() => setProcessing({ step: 'idle', progressMessage: '' })}
+          onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
+        />
 
         {/* Error Alert Box */}
         {processing.step === 'error' && (
